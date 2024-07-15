@@ -21,7 +21,7 @@ int motorAngles[numMotors] = {0, 0, 0, 0}; // 电机角度初始化为0
 
 void setup() {
   Serial.begin(9600);
-  Wire.begin(0,2);
+  Wire.begin(0, 2);
   pca9685.setupSingleDevice(Wire, 0x40);
   pca9685.setToServoFrequency();
 
@@ -58,7 +58,7 @@ void setup_wifi() {
 void reconnect() {
   while (!client.connected()) {
     Serial.print("尝试MQTT连接...");
-    if (client.connect("ESP8266Client", mqtt_user, mqtt_password)) {
+    if (client.connect("ESP8266Client_legs", mqtt_user, mqtt_password)) {
       Serial.println("已连接");
       client.subscribe("motor/control");
     } else {
@@ -93,9 +93,7 @@ void handleSetMotorAngle(int motorIndex) {
   if (server.hasArg("angle")) {
     int angle = server.arg("angle").toInt();
     if (angle >= 0 && angle <= 180) {
-      motorAngles[motorIndex] = angle;
-      int pulseWidth = map(angle, 0, 180, 500, 2500); // 将角度映射到脉冲宽度
-      pca9685.setChannelServoPulseDuration(motorChannels[motorIndex], pulseWidth);
+      setMotorAngle(motorIndex, angle);
       String message = "电机" + String(motorIndex) + "角度设置为" + String(angle) + "度";
       Serial.println(message);  // 添加调试信息
       server.send(200, "text/html", "<html><head><meta charset='UTF-8'></head><body><h1>" + message + "</h1>"
@@ -110,22 +108,40 @@ void handleSetMotorAngle(int motorIndex) {
   }
 }
 
+void setMotorAngle(int motorIndex, int angle) {
+  motorAngles[motorIndex] = angle;
+  int pulseWidth = map(angle, 0, 180, 500, 2500); // 将角度映射到脉冲宽度
+  pca9685.setChannelServoPulseDuration(motorChannels[motorIndex], pulseWidth);
+  String message = "电机" + String(motorIndex) + "角度设置为" + String(angle) + "度";
+  Serial.println(message);  // 添加调试信息
+}
+
 void callback(char* topic, byte* payload, unsigned int length) {
   String message;
   for (int i = 0; i < length; i++) {
     message += (char)payload[i];
   }
 
+  Serial.print("消息来自主题 [");
+  Serial.print(topic);
+  Serial.print("]: ");
+  Serial.println(message);
+
   if (String(topic) == "motor/control") {
-    int motorIndex = message.charAt(0) - '0'; // 获取电机索引
-    int angle = message.substring(1).toInt(); // 获取角度
-    if (motorIndex >= 0 && motorIndex < numMotors && angle >= 0 && angle <= 180) {
-      motorAngles[motorIndex] = angle;
-      int pulseWidth = map(angle, 0, 180, 500, 2500); // 将角度映射到脉冲宽度
-      pca9685.setChannelServoPulseDuration(motorChannels[motorIndex], pulseWidth);
-      String response = "电机" + String(motorIndex) + "角度设置为" + String(angle) + "度";
-      Serial.println(response);  // 添加调试信息
-      client.publish("motor/status", response.c_str());
+    int separatorIndex = message.indexOf(':');
+    if (separatorIndex != -1) {
+      int motorIndex = message.substring(0, separatorIndex).toInt();
+      int angle = message.substring(separatorIndex + 1).toInt();
+      if (motorIndex >= 0 && motorIndex < numMotors && angle >= 0 && angle <= 180) {
+        setMotorAngle(motorIndex, angle);
+        String response = "电机" + String(motorIndex) + "角度设置为" + String(angle) + "度";
+        Serial.println(response);  // 添加调试信息
+        client.publish("motor/status", response.c_str());
+      } else {
+        Serial.println("无效的电机索引或角度");
+      }
+    } else {
+      Serial.println("消息格式错误");
     }
   }
 }

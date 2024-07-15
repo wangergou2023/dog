@@ -1,11 +1,17 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
+#include <PubSubClient.h>
 #include "Face.h"
 
 // WiFi配置
 const char* ssid = "your";  // 替换为您的WiFi名称
 const char* password = "your";  // 替换为您的WiFi密码
+const char* mqtt_server = "your"; // 替换为您的MQTT代理地址
+const char* mqtt_user = "your"; // 替换为您的MQTT用户名
+const char* mqtt_password = "your"; // 替换为您的MQTT密码
 
+WiFiClient espClient;
+PubSubClient client(espClient);
 // Web服务器对象
 ESP8266WebServer server(80);
 
@@ -59,6 +65,12 @@ void handleRoot() {
 // 处理设置表情的HTTP请求
 void handleSetEmotion() {
   String emotion = server.arg("emotion");
+  setEmotion(emotion);
+  server.send(200, "text/html", "<html><head><meta charset='UTF-8'></head><body><h1>表情已设置为 " + emotion + "</h1>"
+                                "<p><a href=\"/\">返回主页面</a></p></body></html>");
+}
+
+void setEmotion(String emotion) {
   if (emotion == "Normal") {
     face->Expression.GoTo_Normal();
   } else if (emotion == "Angry") {
@@ -96,25 +108,21 @@ void handleSetEmotion() {
   } else if (emotion == "Awe") {
     face->Expression.GoTo_Awe();
   }
-  server.send(200, "text/html", "<html><head><meta charset='UTF-8'></head><body><h1>表情已设置为 " + emotion + "</h1>"
-                                "<p><a href=\"/\">返回主页面</a></p></body></html>");
 }
 
 void setup() {
-  Serial.begin(115200);
-  
+  Serial.begin(9600);
+
   // 初始化WiFi连接
   setup_wifi();
-  
+  client.setServer(mqtt_server, 1883);
+  client.setCallback(callback);
+
   // 创建一个新的面部对象，设置屏幕宽度、高度和眼睛大小
   face = new Face(/* screenWidth = */ 128, /* screenHeight = */ 64, /* eyeSize = */ 40);
   // 设置当前表情为正常
   face->Expression.GoTo_Normal();
 
-  // 设置每种情绪的权重（目前被注释掉）
-  //face->Behavior.SetEmotion(eEmotions::Normal, 1.0);
-  //face->Behavior.SetEmotion(eEmotions::Angry, 1.0);
-  //face->Behavior.SetEmotion(eEmotions::Sad, 1.0);
   // 自动在不同的行为之间切换（基于分配给每种情绪的权重随机选择新的行为）
   face->RandomBehavior = true;
 
@@ -135,10 +143,42 @@ void setup() {
 }
 
 void loop() {
+  if (!client.connected()) {
+    reconnect();
+  }
+  client.loop();
   // 处理Web服务器客户端请求
   server.handleClient();
 
   // 更新面部显示
   face->Update();
+}
 
+void reconnect() {
+  while (!client.connected()) {
+    Serial.print("尝试MQTT连接...");
+    if (client.connect("ESP8266Client_face", mqtt_user, mqtt_password)) {
+      Serial.println("已连接");
+      client.subscribe("emotion/control");
+    } else {
+      Serial.print("连接失败, rc=");
+      Serial.print(client.state());
+      Serial.println(" 5秒后重试");
+      delay(5000);
+    }
+  }
+}
+
+void callback(char* topic, byte* payload, unsigned int length) {
+  String message;
+  for (int i = 0; i < length; i++) {
+    message += (char)payload[i];
+  }
+
+  if (String(topic) == "emotion/control") {
+    setEmotion(message);
+    String response = "表情设置为 " + message;
+    Serial.println(response);
+    client.publish("emotion/status", response.c_str());
+  }
 }
